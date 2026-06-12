@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>终极 TOTP 验证器 V3</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'media',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* 平滑过渡圆环 */
+        .progress-ring__circle {
+            transition: stroke-dashoffset 0.1s linear, stroke 0.3s ease;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+        
+        /* 数字跳动动画 */
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .pop-anim {
+            animation: pop 0.2s ease-in-out;
+        }
+
+        /* 隐藏滚动条但保留功能 */
+        body {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        body::-webkit-scrollbar {
+            display: none;
+        }
+
+        /* 隐私模式模糊过渡 */
+        .privacy-blur {
+            filter: blur(8px);
+            opacity: 0.7;
+            transition: all 0.3s ease;
+        }
+        .privacy-blur:hover {
+            filter: blur(2px);
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-900 min-h-screen flex items-center justify-center p-4 text-slate-800 dark:text-slate-100 transition-colors duration-300">
+
+    <div class="w-full max-w-md bg-white dark:bg-slate-800 rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700 transition-colors duration-300">
+        <!-- 头部 -->
+        <div class="bg-brand-600 p-6 text-white text-center relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="w-full h-full">
+                    <path d="M0 100 C 20 0 50 0 100 100 Z" fill="white" />
+                </svg>
+            </div>
+            <div class="flex justify-between items-center relative z-10 mb-1">
+                <div class="w-6"></div> <!-- 占位平衡 -->
+                <h1 class="text-2xl font-bold tracking-tight">TOTP Authenticator V3</h1>
+                <!-- 隐私开关 -->
+                <button onclick="togglePrivacy()" id="privacy-btn" class="text-brand-100 hover:text-white transition-colors" title="切换隐私模式">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                </button>
+            </div>
+            <p class="text-brand-100 text-sm mt-1 relative z-10">安全、快速的双重验证工具</p>
+            <p class="text-brand-100/70 text-xs mt-1 relative z-10">By Jquan</p>
+        </div>
+
+        <div class="p-8 space-y-8">
+            
+            <!-- 密钥输入区 -->
+            <div class="space-y-3">
+                <label for="secret" class="block text-sm font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Base32 密钥</label>
+                <div class="relative group">
+                    <input type="text" id="secret" 
+                        class="w-full pl-4 pr-12 py-3 bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 rounded-xl focus:border-brand-500 dark:focus:border-brand-500 focus:ring-0 outline-none transition-all font-mono text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 group-hover:border-slate-300 dark:group-hover:border-slate-600"
+                        placeholder="输入密钥 (如: JBSWY3DPEHPK...)" 
+                        autocomplete="off">
+                    <button onclick="pasteSecret()" class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-slate-800 rounded-lg transition-colors" title="粘贴">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="error-msg" class="text-red-500 text-xs hidden font-medium flex items-center">
+                    <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                    密钥格式无效
+                </div>
+            </div>
+
+            <!-- 显示区域 (默认隐藏，有密钥时显示) -->
+            <div id="display-area" class="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-6 border border-slate-100 dark:border-slate-700/50 relative transition-all duration-300 opacity-50 grayscale pointer-events-none">
+                
+                <div class="flex flex-col items-center justify-center space-y-6">
+                    <!-- 验证码显示区（使用幽灵文本技术实现完美复制） -->
+                    <div class="relative w-full text-center group cursor-pointer" onclick="copyCode()" title="点击复制">
+                        <div class="text-xs text-slate-400 dark:text-slate-500 font-medium mb-2 tracking-widest uppercase">当前验证码</div>
+                        
+                        <div class="relative flex justify-center items-center h-16 w-full transition-transform active:scale-95">
+                            <!-- 1. 视觉层：负责展示间距，不参与文本选中 -->
+                            <div id="visual-code" class="absolute inset-0 flex justify-center items-center gap-3 text-5xl font-mono font-bold tracking-widest text-slate-800 dark:text-slate-100 pointer-events-none transition-all duration-300">
+                                <span>---</span><span>---</span>
+                            </div>
+                            <!-- 2. 幽灵层：透明的真实文本，供拖拽或双击全选，完美避开空格 -->
+                            <div id="totp-code" class="absolute inset-0 flex justify-center items-center text-5xl font-mono font-bold tracking-widest text-transparent selection:bg-brand-500/30 selection:text-transparent select-all tabular-nums z-10">------</div>
+                        </div>
+                        
+                        <!-- 复制提示 Tooltip -->
+                        <div id="copy-tip" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-800 dark:bg-white text-white dark:text-slate-800 text-xs px-4 py-2 rounded-full opacity-0 pointer-events-none transition-opacity shadow-lg z-20 font-medium">
+                            已复制!
+                        </div>
+                        <div class="text-xs text-brand-600 dark:text-brand-400 font-medium mt-3 opacity-0 group-hover:opacity-100 transition-opacity">点击复制</div>
+                    </div>
+
+                    <!-- 倒计时圆环 -->
+                    <div class="relative w-20 h-20">
+                        <svg class="w-full h-full" viewBox="0 0 100 100">
+                            <!-- 背景圆 -->
+                            <circle class="text-slate-200 dark:text-slate-700 stroke-current" stroke-width="8" cx="50" cy="50" r="40" fill="transparent"></circle>
+                            <!-- 进度圆 -->
+                            <circle id="progress-circle" class="progress-ring__circle text-brand-500 stroke-current" stroke-width="8" stroke-linecap="round" cx="50" cy="50" r="40" fill="transparent" stroke-dasharray="251.2" stroke-dashoffset="0"></circle>
+                        </svg>
+                        <!-- 倒计时文字 -->
+                        <div class="absolute top-0 left-0 w-full h-full flex items-center justify-center">
+                            <span id="countdown-text" class="text-xl font-bold text-slate-700 dark:text-slate-300 tabular-nums">30</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部 -->
+        <div class="bg-slate-50 dark:bg-slate-900/50 p-4 text-center border-t border-slate-100 dark:border-slate-800">
+             <p class="text-xs text-slate-400 dark:text-slate-500 flex items-center justify-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+                </svg>
+                密钥已在本地混淆加密存储
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // CAN: 工具函数与状态管理
+        const Elements = {
+            input: document.getElementById('secret'),
+            displayArea: document.getElementById('display-area'),
+            visualCode: document.getElementById('visual-code'),
+            ghostCode: document.getElementById('totp-code'),
+            circle: document.getElementById('progress-circle'),
+            countdown: document.getElementById('countdown-text'),
+            error: document.getElementById('error-msg'),
+            copyTip: document.getElementById('copy-tip'),
+            privacyBtn: document.getElementById('privacy-btn')
+        };
+
+        const STATE = {
+            currentSecret: '',
+            lastCode: '',
+            animationFrame: null,
+            totalCircumference: 2 * Math.PI * 40, // r=40
+            isPrivacyMode: false
+        };
+
+        // 简单的存储混淆，防止非专业人士在 LocalStorage 中直接看到明文
+        const StorageManager = {
+            save: (key) => localStorage.setItem('totp_sec_v3', btoa(key)),
+            load: () => {
+                const data = localStorage.getItem('totp_sec_v3');
+                return data ? atob(data) : null;
+            },
+            clear: () => localStorage.removeItem('totp_sec_v3')
+        };
+
+        // 初始化
+        (function init() {
+            // 1. 优先检查 URL 参数 (?secret=... 或 ?key=...)
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlSecret = urlParams.get('secret') || urlParams.get('key');
+            
+            // 2. 其次检查本地混淆存储
+            const savedSecret = StorageManager.load();
+            
+            if (urlSecret) {
+                Elements.input.value = urlSecret;
+                StorageManager.save(urlSecret);
+            } else if (savedSecret) {
+                Elements.input.value = savedSecret;
+            }
+            
+            // 3. 启动校验
+            if (Elements.input.value) {
+                validateAndStart();
+            }
+            
+            // 监听输入事件
+            Elements.input.addEventListener('input', () => validateAndStart());
+        })();
+
+        async function pasteSecret() {
+            try {
+                const text = await navigator.clipboard.readText();
+                Elements.input.value = text;
+                validateAndStart();
+            } catch (err) {
+                console.error('Failed to read clipboard', err);
+            }
+        }
+
+        // 切换隐私模式
+        function togglePrivacy() {
+            STATE.isPrivacyMode = !STATE.isPrivacyMode;
+            if (STATE.isPrivacyMode) {
+                Elements.visualCode.classList.add('privacy-blur');
+                Elements.privacyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>`;
+            } else {
+                Elements.visualCode.classList.remove('privacy-blur');
+                Elements.privacyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>`;
+            }
+        }
+
+        function validateAndStart() {
+            const rawInput = Elements.input.value.replace(/\s/g, '').toUpperCase();
+            
+            if (rawInput.length === 0) {
+                resetUI();
+                return;
+            }
+
+            const base32Regex = /^[A-Z2-7]+=*$/;
+            if (!base32Regex.test(rawInput)) {
+                showError(true);
+                disableDisplay();
+                return;
+            }
+
+            const testCode = calculateTOTP(rawInput);
+            if (testCode.startsWith('ERR')) {
+                showError(true);
+                disableDisplay();
+            } else {
+                showError(false);
+                enableDisplay();
+                STATE.currentSecret = rawInput;
+                StorageManager.save(rawInput);
+                
+                if (!STATE.animationFrame) {
+                    loop();
+                }
+            }
+        }
+
+        function showError(show) {
+            Elements.error.classList.toggle('hidden', !show);
+            Elements.input.classList.toggle('border-red-500', show);
+            Elements.input.classList.toggle('text-red-600', show);
+            Elements.input.classList.toggle('dark:text-red-400', show);
+            Elements.input.classList.toggle('focus:border-brand-500', !show);
+            Elements.input.classList.toggle('focus:border-red-500', show);
+        }
+
+        function enableDisplay() {
+            Elements.displayArea.classList.remove('opacity-50', 'grayscale', 'pointer-events-none');
+            Elements.displayArea.classList.add('opacity-100', 'grayscale-0');
+        }
+
+        function disableDisplay() {
+            Elements.displayArea.classList.add('opacity-50', 'grayscale', 'pointer-events-none');
+            Elements.displayArea.classList.remove('opacity-100', 'grayscale-0');
+            Elements.visualCode.innerHTML = "<span>---</span><span>---</span>";
+            Elements.ghostCode.textContent = "------";
+            cancelAnimationFrame(STATE.animationFrame);
+            STATE.animationFrame = null;
+        }
+
+        function resetUI() {
+            showError(false);
+            disableDisplay();
+            StorageManager.clear();
+        }
+
+        function loop() {
+            updateTOTP();
+            STATE.animationFrame = requestAnimationFrame(loop);
+        }
+
+        function updateTOTP() {
+            if (!STATE.currentSecret) return;
+
+            const epoch = Math.floor(Date.now() / 1000);
+            const timeStep = 30;
+            const elapsed = epoch % timeStep;
+            const remaining = timeStep - elapsed;
+            
+            const ms = Date.now() % (timeStep * 1000);
+            const progress = ms / (timeStep * 1000); 
+
+            Elements.countdown.textContent = remaining;
+
+            const offset = STATE.totalCircumference * progress;
+            Elements.circle.style.strokeDashoffset = -offset;
+
+            // 优化圆环色彩渐变逻辑
+            if (remaining <= 5) {
+                Elements.circle.classList.remove('text-brand-500', 'text-yellow-500');
+                Elements.circle.classList.add('text-red-500');
+                Elements.countdown.classList.add('text-red-500');
+            } else if (remaining <= 10) {
+                Elements.circle.classList.remove('text-brand-500', 'text-red-500');
+                Elements.circle.classList.add('text-yellow-500');
+                Elements.countdown.classList.remove('text-red-500');
+            } else {
+                Elements.circle.classList.remove('text-red-500', 'text-yellow-500');
+                Elements.circle.classList.add('text-brand-500');
+                Elements.countdown.classList.remove('text-red-500');
+            }
+
+            const newCode = calculateTOTP(STATE.currentSecret);
+            if (newCode !== STATE.lastCode) {
+                STATE.lastCode = newCode;
+                
+                // Jquan's Hack: 视觉层负责排版，幽灵层负责原始数据供选择
+                Elements.visualCode.innerHTML = `<span>${newCode.slice(0, 3)}</span><span>${newCode.slice(3)}</span>`;
+                Elements.ghostCode.textContent = newCode;
+                
+                // 跳动动画
+                Elements.visualCode.classList.remove('pop-anim');
+                void Elements.visualCode.offsetWidth;
+                Elements.visualCode.classList.add('pop-anim');
+            }
+        }
+
+        // CAN: 核心算法实现
+        function base32Decode(base32) {
+            const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+            let bits = 0, value = 0, output = [];
+            for (let i = 0; i < base32.length; i++) {
+                const char = base32.charAt(i);
+                const index = alphabet.indexOf(char);
+                if (index === -1) continue;
+                value = (value << 5) | index;
+                bits += 5;
+                if (bits >= 8) {
+                    bits -= 8;
+                    output.push((value >>> bits) & 0xFF);
+                }
+            }
+            return output;
+        }
+
+        function calculateTOTP(secret) {
+            try {
+                const keyBytes = base32Decode(secret);
+                if (keyBytes.length === 0) return "ERR";
+
+                const timeStep = 30;
+                const timestamp = Math.floor(Date.now() / 1000);
+                const counter = Math.floor(timestamp / timeStep);
+
+                const counterBytes = CryptoJS.lib.WordArray.create();
+                counterBytes.words.push(Math.floor(counter / 0x100000000)); 
+                counterBytes.words.push(counter & 0xFFFFFFFF);
+                
+                const buffer = new ArrayBuffer(8);
+                const view = new DataView(buffer);
+                view.setUint32(0, 0, false);
+                view.setUint32(4, counter, false);
+                const counterWordArray = CryptoJS.lib.WordArray.create(buffer);
+                
+                const keyWords = [];
+                for(let i=0; i<keyBytes.length; i+=4) {
+                    let word = 0;
+                    if (i < keyBytes.length) word |= keyBytes[i] << 24;
+                    if (i+1 < keyBytes.length) word |= keyBytes[i+1] << 16;
+                    if (i+2 < keyBytes.length) word |= keyBytes[i+2] << 8;
+                    if (i+3 < keyBytes.length) word |= keyBytes[i+3];
+                    keyWords.push(word);
+                }
+                const keyWordArray = CryptoJS.lib.WordArray.create(keyWords, keyBytes.length);
+
+                const hmac = CryptoJS.HmacSHA1(counterWordArray, keyWordArray);
+                const hmacHex = hmac.toString(CryptoJS.enc.Hex);
+
+                const hmacBytes = [];
+                for (let i = 0; i < hmacHex.length; i += 2) {
+                    hmacBytes.push(parseInt(hmacHex.substr(i, 2), 16));
+                }
+
+                const offset = hmacBytes[hmacBytes.length - 1] & 0x0F;
+                const binary =
+                    ((hmacBytes[offset] & 0x7F) << 24) |
+                    ((hmacBytes[offset + 1] & 0xFF) << 16) |
+                    ((hmacBytes[offset + 2] & 0xFF) << 8) |
+                    (hmacBytes[offset + 3] & 0xFF);
+
+                const otp = binary % 1000000;
+                return otp.toString().padStart(6, '0');
+            } catch (e) {
+                console.error(e);
+                return "ERR";
+            }
+        }
+
+        // 复制功能升级：直接获取核心数据内存态，不依赖 DOM 的不可控抓取
+        function copyCode() {
+            if (!STATE.currentSecret || STATE.lastCode.includes('-')) return;
+            
+            // 直接复制 STATE 里的纯净 6 位数字，彻底杜绝夹带空格或 HTML 格式的可能性
+            navigator.clipboard.writeText(STATE.lastCode).then(() => {
+                Elements.copyTip.style.opacity = '1';
+                // 让提示稍微灵动一些，附带复制成功的反馈数字
+                Elements.copyTip.textContent = "已复制: " + STATE.lastCode;
+                setTimeout(() => {
+                    Elements.copyTip.style.opacity = '0';
+                }, 1500);
+            });
+        }
+    </script>
+</body>
+</html>
